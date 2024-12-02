@@ -1,0 +1,7 @@
+name: Cookie Voter
+type: module
+description: 'Uses cookies to track anonymous votes instead of IP addresses.'
+core_version_requirement: ^9 || ^10
+dependencies:
+  - votingapi:votingapi
+  - rate:rate

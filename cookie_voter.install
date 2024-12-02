@@ -1,0 +1,24 @@
+<?php
+
+/**
+ * @file
+ * Install functions for Cookie Voter module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function cookie_voter_install() {
+  // Clear existing anonymous votes since they're IP-based
+  $count = \Drupal::database()->delete('votingapi_vote')
+    ->condition('user_id', 0)
+    ->execute();
+
+  // Both log and show the message
+  $message = \Drupal::translation()->translate('Cookie Voter module installed. @count anonymous votes have been cleared.',
+    ['@count' => $count]
+  );
+
+  \Drupal::messenger()->addStatus($message);
+  \Drupal::logger('cookie_voter')->notice($message);
+}

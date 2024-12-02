@@ -1,0 +1,113 @@
+<?php
+
+/**
+ * @file
+ * Uses cookies instead of IP addresses to track anonymous votes.
+ *
+ * This module integrates with Rate and VotingAPI by ensuring cookie IDs are used
+ * as vote sources throughout the voting process, allowing anonymous users' votes
+ * to persist across sessions without requiring user accounts.
+ */
+
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\votingapi\VoteInterface;
+use Drupal\Core\Entity\EntityInterface;
+
+/**
+ * Gets or sets the voting cookie.
+ *
+ * Creates a persistent cookie if one doesn't exist, allowing anonymous votes
+ * to be tracked across sessions.
+ *
+ * @return string
+ *   The cookie ID used for vote tracking.
+ */
+function cookie_voter_get_id() {
+  $cookie_name = 'Drupal_CookieVoter';
+
+  if (empty($_COOKIE[$cookie_name])) {
+    $unique_id = uniqid('vote_', true);
+    setcookie(
+      $cookie_name,
+      $unique_id,
+      time() + 31536000, // 1 year expiration
+      '/'
+    );
+    $_COOKIE[$cookie_name] = $unique_id;
+  }
+
+  return $_COOKIE[$cookie_name];
+}
+
+/**
+ * Implements hook_entity_create().
+ *
+ * Sets the cookie ID as vote source when Rate initially creates a Vote entity.
+ * This ensures Rate finds the correct vote when checking for existing votes.
+ */
+function cookie_voter_entity_create(EntityInterface $entity) {
+  if ($entity instanceof VoteInterface && !\Drupal::currentUser()->id()) {
+    $cookie_id = cookie_voter_get_id();
+    $entity->set('vote_source', $cookie_id);
+  }
+}
+
+/**
+ * Implements hook_rate_vote_data_alter().
+ *
+ * Ensures the cookie ID is used as vote source when Rate prepares vote data.
+ * This hook is called by Rate's getEntityForVoting() method.
+ */
+function cookie_voter_rate_vote_data_alter(&$vote_data, $entity_type, $entity_bundle, $entity_id, $rate_widget, $settings, $user_id) {
+  if (empty($user_id) || $user_id == 0) {
+    $cookie_id = cookie_voter_get_id();
+    $vote_data['vote_source'] = $cookie_id;
+  }
+}
+
+/**
+ * Implements hook_entity_presave().
+ *
+ * Final check to ensure the cookie ID is saved as the vote source.
+ * Acts as a safety net for any votes that might have missed earlier hooks.
+ */
+function cookie_voter_entity_presave(EntityInterface $entity) {
+  if ($entity instanceof VoteInterface && $entity->getOwnerId() == 0) {
+    $cookie_id = cookie_voter_get_id();
+    $entity->set('vote_source', $cookie_id);
+  }
+}
+
+/**
+ * Implements hook_query_TAG_alter().
+ *
+ * Modifies vote lookup queries to search by cookie ID instead of IP address.
+ * This ensures Rate finds existing votes when building its voting widgets.
+ */
+function cookie_voter_query_votingapi_vote_check_alter($query) {
+  foreach ($query->conditions() as $key => $condition) {
+    if (isset($condition['field']) &&
+        $condition['field'] === 'vote_source' &&
+        !\Drupal::currentUser()->id()) {
+      $cookie_id = cookie_voter_get_id();
+      $condition['value'] = $cookie_id;
+      $query->condition('vote_source', $cookie_id, '=');
+    }
+  }
+}
+
+/**
+ * Implements hook_module_implements_alter().
+ *
+ * Ensures our hooks run before Rate's hooks, allowing us to set the vote source
+ * before Rate attempts to use it for vote lookups or UI state management.
+ */
+function cookie_voter_module_implements_alter(&$implementations, $hook) {
+  if (in_array($hook, ['entity_create', 'rate_vote_data_alter'])) {
+    if (isset($implementations['cookie_voter'])) {
+      $group = $implementations['cookie_voter'];
+      unset($implementations['cookie_voter']);
+      $implementations = ['cookie_voter' => $group] + $implementations;
+    }
+  }
+}
